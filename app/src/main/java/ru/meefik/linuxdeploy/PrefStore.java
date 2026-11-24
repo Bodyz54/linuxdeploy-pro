@@ -549,6 +549,12 @@ public class PrefStore {
         return (u == null || u.isEmpty()) ? "android" : u;
     }
 
+    public static String getNativeFlag(Context c, String key, boolean def) {
+        String v = PROPERTIES.get(c, key);
+        if (v == null || v.isEmpty()) return def ? "1" : "0";
+        return "true".equals(v) ? "1" : "0";
+    }
+
     public static String getNativeDesktop(Context c) {
         String v = PROPERTIES.get(c, "native_desktop");
         return (v == null || v.isEmpty()) ? "mate" : v;

@@ -450,7 +450,9 @@ public class EnvUtils {
         List<String> params = new ArrayList<>();
         if ("native-start".equals(cmd)) {
             params.add("sh " + dir + "/native-start.sh '" + root + "' '" + PrefStore.getUserName(c)
-                    + "' '" + PrefStore.getGpuVendor(c) + "' '" + PrefStore.getNativeDesktop(c) + "'");
+                    + "' '" + PrefStore.getGpuVendor(c) + "' '" + PrefStore.getNativeDesktop(c)
+                    + "' '" + PrefStore.getNativeFlag(c, "native_gamepad", true)
+                    + "' '" + PrefStore.getNativeFlag(c, "native_game_mode", false) + "'");
         } else {
             params.add("sh " + dir + "/native-stop.sh '" + root + "'");
         }

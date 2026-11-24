@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # Start button (root). usage: native-start.sh <ROOT> <USER> <GPU:auto|mali|adreno|powervr|software>
-CUSER="$2"; GPU="${3:-auto}"; DE="${4:-mate}"
+CUSER="$2"; GPU="${3:-auto}"; DE="${4:-mate}"; PAD="${5:-1}"; GAME="${6:-0}"
 D="$(dirname "$0")"
 . "$D/lib-root.sh" "$1"
 ROOT="$R"
@@ -18,7 +18,7 @@ sh "$D/kernel-check.sh" | grep -v '^ok'
 
 # Install the chosen desktop / GPU packages inside the chroot when missing
 CH="chroot $ROOT /usr/bin/env -i HOME=/root TERM=xterm-256color LANG=C.UTF-8 TMPDIR=/tmp PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-cp "$D/chroot-desktop.sh" "$D/gpu-setup.sh" "$D/dbus-setup.sh" "$D/icd-refresh.sh" "$ROOT/root/" 2>/dev/null
+cp "$D/chroot-desktop.sh" "$D/gpu-setup.sh" "$D/dbus-setup.sh" "$D/icd-refresh.sh" "$D/gamepad-setup.sh" "$D/padmouse" "$D/gamelauncher" "$ROOT/root/" 2>/dev/null
 if ! grep -qx "$DE" "$ROOT/etc/ld-desktops" 2>/dev/null || [ ! -x "$ROOT/usr/local/bin/start-desktop" ]; then
   echo "installing desktop '$DE' (needs internet, takes a while)"
   printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > "$ROOT/etc/resolv.conf"
@@ -29,6 +29,13 @@ if [ ! -f "$ROOT/etc/gpu-vendor" ]; then
   $CH /bin/bash /root/gpu-setup.sh "$GPU" "https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-async/panvk-mali-g57-v1.0.0-glibc-async.tar.gz" || echo "GPU setup incomplete; continuing"
 fi
 echo "$DE" > "$ROOT/etc/ld-desktop"
+# Gamepad support (padmouse + launcher) and live USB/gamepad permissions
+pgrep -f usbwatch.sh >/dev/null || (sh "$D/usbwatch.sh" >/dev/null 2>&1 &)
+if [ "$PAD" = 1 ] && [ ! -f "$ROOT/etc/ld-gamepad" ]; then
+  echo "installing gamepad support"
+  $CH /bin/bash /root/gamepad-setup.sh "$CUSER" || echo "gamepad install incomplete; continuing"
+fi
+rm -f "$TP/usr/tmp/tx11-game"; [ "$GAME" = 1 ] && touch "$TP/usr/tmp/tx11-game"
 # ICD directory + manifest are regenerated automatically on every Start
 $CH /bin/bash /root/icd-refresh.sh "$GPU"
 

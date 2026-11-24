@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""gamelauncher - fullscreen, gamepad-navigable launcher.
+   D-pad / left stick = move, A = open, B = back, Start = home. Mouse/keyboard also work."""
+import os, re, shlex, shutil, subprocess, sys
+import gi
+gi.require_version("Gtk", "3.0"); gi.require_version("Gdk", "3.0")
+from gi.repository import Gtk, Gdk, GLib, Gio
+try:
+    from evdev import InputDevice, list_devices, ecodes as ec
+except Exception:
+    ec = None
+
+HOME = os.path.expanduser("~")
+ROMS = os.path.join(HOME, "ROMs"); WINGAMES = os.path.join(HOME, "WinGames")
+PADMOUSE = "/usr/local/bin/padmouse"
+DEV = subprocess.DEVNULL
+SKIP_EXT = {".txt", ".srm", ".sav", ".state", ".png", ".jpg", ".xml", ".cfg", ".nfo", ".dat", ".db"}
+
+CSS = b"""
+window { background: #11141c; }
+.title { color: #e8ecf5; font-size: 30px; font-weight: bold; }
+.hint  { color: #8a93a6; font-size: 16px; }
+button.tile { background: #1b2030; border: 3px solid transparent; border-radius: 16px;
+              color: #e8ecf5; padding: 14px; min-width: 190px; min-height: 150px; outline-style: none; }
+button.tile:focus, button.tile:hover { background: #26304a; border-color: #4f8cff; }
+.emoji  { font-size: 56px; }
+.tlabel { color: #e8ecf5; font-size: 18px; }
+"""
+
+def pad_mode(m):
+    subprocess.call(["pkill", "-USR1" if m == "game" else "-USR2", "-f", PADMOUSE], stderr=DEV)
+
+def find_pad():
+    if ec is None: return None
+    for path in list_devices():
+        try: d = InputDevice(path)
+        except Exception: continue
+        caps = d.capabilities()
+        absc = [a[0] if isinstance(a, tuple) else a for a in caps.get(ec.EV_ABS, [])]
+        n = d.name.lower()
+        if ec.ABS_X in absc and ec.BTN_SOUTH in caps.get(ec.EV_KEY, []) and \
+           not any(w in n for w in ("touch", "accel", "gyro", "motion", "mouse", "keyboard")):
+            return d
+        d.close()
+    return None
+
+def desktop_apps(games):
+    out = []
+    for a in Gio.AppInfo.get_all():
+        if not isinstance(a, Gio.DesktopAppInfo) or not a.should_show(): continue
+        if a.get_boolean("Terminal"): continue
+        is_game = "Game" in (a.get_categories() or "")
+        if is_game == games: out.append(a)
+    return sorted(out, key=lambda x: x.get_display_name().lower())
+
+class Launcher(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.tx11.gamelauncher")
+        self.win = None; self.stack = []; self.cur = None
+        self.pad = None; self.active = True; self.axis_state = {}
+
+    # ---------- UI
+    def do_activate(self):
+        if self.win is None: self.build()
+        else:
+            self.win.deiconify(); self.win.fullscreen(); self.win.present()
+        self.active = True; pad_mode("game")
+
+    def build(self):
+        prov = Gtk.CssProvider(); prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.win = Gtk.ApplicationWindow(application=self, title="Game Launcher")
+        self.win.connect("key-press-event", self.on_key)
+        self.win.connect("delete-event", lambda *a: (self.quit_launcher(), True)[1])
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(24); box.set_margin_bottom(16); box.set_margin_start(32); box.set_margin_end(32)
+        self.title = Gtk.Label(xalign=0); self.title.get_style_context().add_class("title")
+        self.sw = Gtk.ScrolledWindow(); self.sw.set_vexpand(True)
+        self.sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.grid = Gtk.Grid(column_spacing=18, row_spacing=18, halign=Gtk.Align.CENTER)
+        self.grid.set_focus_vadjustment(self.sw.get_vadjustment())
+        self.sw.add(self.grid)
+        self.hint = Gtk.Label(label="A: open    B: back    Start: home    (Select+Start on pad: mouse / game mode)", xalign=0)
+        self.hint.get_style_context().add_class("hint")
+        for w in (self.title, self.sw, self.hint): box.pack_start(w, w is self.sw, True, 0)
+        self.win.add(box)
+        w = Gdk.Screen.get_default().get_width()
+        self.cols = max(3, min(7, w // 230))
+        self.win.fullscreen(); self.win.show_all()
+        self.home(); self.attach_pad()
+
+    def toast(self, msg):
+        self.hint.set_text(msg); GLib.timeout_add_seconds(3, lambda: (self.hint.set_text(
+            "A: open    B: back    Start: home    (Select+Start on pad: mouse / game mode)"), False)[1])
+
+    def show(self, title, items, push=True):
+        if push and self.cur: self.stack.append(self.cur)
+        self.cur = (title, items)
+        for ch in self.grid.get_children(): self.grid.remove(ch)
+        self.title.set_text(title)
+        for i, (label, icon, cb) in enumerate(items):
+            b = Gtk.Button(); b.get_style_context().add_class("tile")
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            if isinstance(icon, str):
+                l = Gtk.Label(label=icon); l.get_style_context().add_class("emoji"); v.pack_start(l, False, False, 0)
+            elif icon is not None:
+                im = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.DIALOG); im.set_pixel_size(64)
+                v.pack_start(im, False, False, 0)
+            t = Gtk.Label(label=label); t.get_style_context().add_class("tlabel")
+            t.set_ellipsize(3); t.set_max_width_chars(18); t.set_line_wrap(True); t.set_lines(2)
+            v.pack_start(t, False, False, 0)
+            b.add(v); b.connect("clicked", lambda _b, f=cb: f())
+            self.grid.attach(b, i % self.cols, i // self.cols, 1, 1)
+        self.grid.show_all()
+        kids = self.grid.get_children()
+        if kids: GLib.idle_add(lambda: kids[-1].grab_focus() or False)  # children are listed in reverse: [-1] = first tile
+
+    def back(self):
+        if self.stack:
+            t, items = self.stack.pop(); self.show(t, items, push=False)
+    def home(self):
+        self.stack = []; self.cur = None
+        self.show("Game Launcher", [
+            ("Web", "🌐", self.m_web), ("Games", "🎮", self.m_games), ("ROMs", "💿", self.m_roms),
+            ("Windows", "🪟", self.m_win), ("Apps", "🧩", self.m_apps), ("System", "⚙", self.m_sys)], push=False)
+
+    # ---------- launching
+    def run(self, args, kind, name=""):
+        try:
+            p = subprocess.Popen(args, cwd=HOME, start_new_session=True)
+        except Exception as ex:
+            self.toast("Cannot start %s: %s" % (args[0], ex)); return
+        self.active = False
+        pad_mode("game" if kind == "game" else "mouse")
+        self.win.iconify()
+        if kind == "game":
+            GLib.child_watch_add(GLib.PRIORITY_DEFAULT, p.pid, self.on_exit)
+
+    def on_exit(self, *a):
+        self.active = True; self.win.deiconify(); self.win.fullscreen(); self.win.present(); pad_mode("game")
+
+    def run_app(self, a, kind):
+        cmd = re.sub(r"%[a-zA-Z%]", "", a.get_commandline() or "")
+        try: args = shlex.split(cmd)
+        except ValueError: self.toast("Bad launcher entry"); return
+        if args: self.run(args, kind)
+
+    # ---------- menus
+    def m_web(self):
+        items = []
+        for exe, label in (("firefox-159", "Firefox 159"), ("firefox", "Firefox"),
+                           ("chromium-full", "Chromium"), ("chromium", "Chromium")):
+            if shutil.which(exe) and label not in [i[0] for i in items]:
+                items.append((label, "🌐", lambda e=exe: self.run([e], "web")))
+        self.show("Web", items or [("No browser found", "❌", self.back)])
+
+    def apps_menu(self, title, games):
+        items = [(a.get_display_name(), a.get_icon(), lambda a=a: self.run_app(a, "game" if games else "app"))
+                 for a in desktop_apps(games)]
+        self.show(title, items or [("Nothing installed here", "❌", self.back)])
+    def m_games(self): self.apps_menu("Games", True)
+    def m_apps(self):  self.apps_menu("Apps", False)
+
+    def m_roms(self):
+        os.makedirs(ROMS, exist_ok=True); items = []
+        for d in sorted(os.listdir(ROMS)):
+            p = os.path.join(ROMS, d)
+            if os.path.isdir(p):
+                n = len([f for f in os.listdir(p) if not f.startswith(".")])
+                if n: items.append(("%s (%d)" % (d, n), "💾", lambda p=p, d=d: self.rom_list(d, p)))
+        self.show("ROMs", items or [("Put ROMs in ~/ROMs/<system>/", "ℹ", self.back)])
+    def rom_list(self, name, path):
+        items = []
+        for f in sorted(os.listdir(path), key=str.lower)[:400]:
+            base, ext = os.path.splitext(f)
+            if f.startswith(".") or ext.lower() in SKIP_EXT: continue
+            full = os.path.join(path, f)
+            items.append((base, "🕹", lambda full=full: self.run(["emu", full], "game")))
+        self.show(name, items or [("Empty folder", "ℹ", self.back)])
+
+    def m_win(self):
+        os.makedirs(WINGAMES, exist_ok=True); items = []
+        for f in sorted(os.listdir(WINGAMES), key=str.lower):
+            ext = os.path.splitext(f)[1].lower(); full = os.path.join(WINGAMES, f)
+            if ext not in (".exe", ".lnk", ".bat"): continue
+            cmd = ["wine", "start", "/unix", full] if ext == ".lnk" else ["wine", full]
+            items.append((os.path.splitext(f)[0], "🪟", lambda c=cmd: self.run(c, "game")))
+            if shutil.which("proton-wine") and ext == ".exe":
+                items.append((os.path.splitext(f)[0] + " (Proton)", "🚀",
+                              lambda full=full: self.run(["proton-wine", full], "game")))
+        items += [("Wine explorer", "🗂", lambda: self.run(["wine", "explorer"], "app")),
+                  ("Wine config", "🔧", lambda: self.run(["winecfg"], "app"))]
+        if shutil.which("winetricks"):
+            items.append(("Winetricks", "🧰", lambda: self.run(["winetricks", "--gui"], "app")))
+        self.show("Windows  (put .exe files in ~/WinGames)", items)
+
+    def m_sys(self):
+        self.show("System", [
+            ("Volume mixer", "🔊", lambda: self.run(["pavucontrol"], "app")),
+            ("Gamepad tester", "🎮", lambda: self.run(["jstest-gtk"], "app")),
+            ("Pad: mouse mode", "🖱", lambda: (pad_mode("mouse"), self.toast("Pad is now a mouse"))),
+            ("Pad: game mode", "🕹", lambda: (pad_mode("game"), self.toast("Pad goes to games"))),
+            ("Desktop", "🖥", self.quit_launcher),
+            ("Exit desktop", "⏻", lambda: self.run(["/usr/local/bin/ld-logout"], "app"))])
+
+    def quit_launcher(self):
+        pad_mode("mouse"); self.quit()
+
+    # ---------- keyboard + gamepad
+    def on_key(self, w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_BackSpace): self.back(); return True
+        return False
+
+    def press(self):
+        f = self.win.get_focus()
+        if isinstance(f, Gtk.Button): f.clicked()
+    def nav(self, d): self.win.child_focus(d)
+
+    def attach_pad(self):
+        d = find_pad()
+        if not d:
+            GLib.timeout_add_seconds(3, self.attach_pad); return False
+        self.pad = d
+        self.info = {c: i for c, i in d.capabilities(absinfo=True).get(ec.EV_ABS, [])}
+        GLib.io_add_watch(d.fd, GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, self.on_pad)
+        return False
+
+    def on_pad(self, fd, cond):
+        if cond & (GLib.IO_HUP | GLib.IO_ERR):
+            self.pad = None; GLib.timeout_add_seconds(2, self.attach_pad); return False
+        try: events = list(self.pad.read())
+        except BlockingIOError: return True
+        except OSError:
+            self.pad = None; GLib.timeout_add_seconds(2, self.attach_pad); return False
+        if not self.active: return True
+        D = Gtk.DirectionType
+        for ev in events:
+            if ev.type == ec.EV_KEY and ev.value == 1:
+                if ev.code == ec.BTN_SOUTH: self.press()
+                elif ev.code == ec.BTN_EAST: self.back()
+                elif ev.code == ec.BTN_START: self.home()
+            elif ev.type == ec.EV_ABS:
+                if ev.code == ec.ABS_HAT0X and ev.value: self.nav(D.RIGHT if ev.value > 0 else D.LEFT)
+                elif ev.code == ec.ABS_HAT0Y and ev.value: self.nav(D.DOWN if ev.value > 0 else D.UP)
+                elif ev.code in (ec.ABS_X, ec.ABS_Y) and ev.code in self.info:
+                    i = self.info[ev.code]; mid = (i.max + i.min) / 2; half = (i.max - i.min) / 2 or 1
+                    v = (ev.value - mid) / half
+                    st = 1 if v > 0.6 else (-1 if v < -0.6 else 0)
+                    if st and st != self.axis_state.get(ev.code, 0):
+                        if ev.code == ec.ABS_X: self.nav(D.RIGHT if st > 0 else D.LEFT)
+                        else: self.nav(D.DOWN if st > 0 else D.UP)
+                    self.axis_state[ev.code] = st
+        return True
+
+if __name__ == "__main__":
+    sys.exit(Launcher().run(sys.argv))

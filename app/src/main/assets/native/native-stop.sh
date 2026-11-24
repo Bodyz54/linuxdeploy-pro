@@ -15,4 +15,6 @@ if [ -n "$TU" ]; then
   su "$TU" -c "$TENV pkill -f 'termux-x11 :0'" 2>/dev/null
   su "$TU" -c "$TENV pulseaudio --kill" 2>/dev/null
 fi
+pkill -f usbwatch.sh 2>/dev/null
+chmod 660 /dev/input/event* /dev/input/js* 2>/dev/null
 exit 0

@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""padmouse - use a gamepad as mouse + keyboard (ROG-Ally style desktop mode).
+   padmouse               run (autostarted with the desktop)
+   padmouse --identify    print button/axis names while you press things (for remapping)
+   Config: ~/.config/padmouse/config.json  (created on first run)
+   Signals: USR1 -> game mode (pad passes through to games), USR2 -> mouse mode"""
+import os, sys, json, time, math, select, signal, subprocess
+from evdev import InputDevice, list_devices, ecodes as ec
+from Xlib import X, XK, display
+from Xlib.ext import xtest
+
+CFG_PATH = os.path.expanduser("~/.config/padmouse/config.json")
+DEFAULT = {
+    "device_match": "gamesir|x5|xbox|controller|gamepad",
+    "start_mode": "mouse",
+    "deadzone": 0.18,
+    "speed": 1100,
+    "slow_mult": 0.25,
+    "fast_mult": 2.2,
+    "scroll_rate": 14,
+    "hscroll": True,
+    "start_cmd": "gamelauncher",
+    "map": {
+        "BTN_SOUTH": "mouse:1",
+        "BTN_EAST": "mouse:3",
+        "BTN_NORTH": "mouse:2",
+        "BTN_WEST": "osk",
+        "BTN_TL": "key:Alt_L+Left",
+        "BTN_TR": "key:Alt_L+Right",
+        "BTN_THUMBL": "key:Escape",
+        "BTN_THUMBR": "key:F11",
+        "BTN_START": "start",
+        "BTN_SELECT": "select",
+        "BTN_MODE": "toggle"
+    },
+    "dpad": {"left": "Left", "right": "Right", "up": "Up", "down": "Down"},
+    "slow_button": "BTN_TL2",
+    "fast_button": "BTN_TR2"
+}
+
+def load_cfg():
+    cfg = json.loads(json.dumps(DEFAULT))
+    try:
+        with open(CFG_PATH) as f:
+            user = json.load(f)
+        for k, v in user.items():
+            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                cfg[k].update(v)
+            else:
+                cfg[k] = v
+    except FileNotFoundError:
+        os.makedirs(os.path.dirname(CFG_PATH), exist_ok=True)
+        with open(CFG_PATH, "w") as f:
+            json.dump(DEFAULT, f, indent=2)
+    except Exception as ex:
+        print("config error:", ex, file=sys.stderr)
+    return cfg
+
+def find_pad(match=""):
+    pats = [m for m in match.lower().split("|") if m]
+    best = None
+    for path in list_devices():
+        try:
+            d = InputDevice(path)
+        except Exception:
+            continue
+        caps = d.capabilities()
+        absc = [a[0] if isinstance(a, tuple) else a for a in caps.get(ec.EV_ABS, [])]
+        keys = caps.get(ec.EV_KEY, [])
+        name = d.name.lower()
+        ok = ec.ABS_X in absc and ec.ABS_Y in absc and ec.BTN_SOUTH in keys
+        if not ok or any(w in name for w in ("touch", "accel", "gyro", "motion", "mouse", "keyboard")):
+            d.close(); continue
+        if any(p in name for p in pats):
+            if best: best.close()
+            return d
+        if best is None: best = d
+        else: d.close()
+    return best
+
+def notify(msg):
+    try:
+        subprocess.Popen(["notify-send", "-t", "1500", "padmouse", msg],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+class PadMouse:
+    def __init__(self):
+        self.cfg = load_cfg()
+        self.dpy = display.Display(os.environ.get("DISPLAY", ":0"))
+        self.dev = None; self.grabbed = False
+        self.mode = self.cfg["start_mode"]
+        self.pending = []
+        self.pressed = set(); self.combo = False; self.held = set()
+        self.hat = [0, 0]; self.hat_dir = None; self.hat_next = 0
+        self.fx = self.fy = self.sy = self.sx = 0.0
+        self.slow_b = self.fast_b = False
+        self.info = {}; self.axes = {}
+        signal.signal(signal.SIGUSR1, lambda *a: self.pending.append("game"))
+        signal.signal(signal.SIGUSR2, lambda *a: self.pending.append("mouse"))
+
+    # ---------- X helpers
+    def move(self, dx, dy):
+        xtest.fake_input(self.dpy, X.MotionNotify, 1, x=dx, y=dy); self.dpy.flush()
+    def click(self, n, down):
+        xtest.fake_input(self.dpy, X.ButtonPress if down else X.ButtonRelease, n)
+        (self.held.add if down else self.held.discard)(n); self.dpy.flush()
+    def kc(self, name):
+        return self.dpy.keysym_to_keycode(XK.string_to_keysym(name))
+    def tap(self, names):
+        codes = [c for c in (self.kc(n) for n in names) if c]
+        for c in codes: xtest.fake_input(self.dpy, X.KeyPress, c)
+        for c in reversed(codes): xtest.fake_input(self.dpy, X.KeyRelease, c)
+        self.dpy.flush()
+    def toggle_osk(self):
+        if subprocess.call(["pgrep", "-x", "onboard"], stdout=subprocess.DEVNULL) == 0:
+            subprocess.call(["pkill", "-x", "onboard"])
+        else:
+            subprocess.Popen(["onboard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # ---------- device
+    def connect(self):
+        d = find_pad(self.cfg["device_match"])
+        if not d: return False
+        self.dev = d
+        caps = d.capabilities(absinfo=True)
+        self.info = {c: i for c, i in caps.get(ec.EV_ABS, [])}
+        self.axes = {c: i.value for c, i in self.info.items()}
+        A = ec.ecodes
+        pick = lambda *ns: next((A[n] for n in ns if n in A and A[n] in self.info), None)
+        self.lsx, self.lsy = ec.ABS_X, ec.ABS_Y
+        rx, ry = pick("ABS_RX"), pick("ABS_RY")
+        if rx is not None and ry is not None:
+            self.rs = (rx, ry); self.lt = pick("ABS_Z", "ABS_BRAKE"); self.rt = pick("ABS_RZ", "ABS_GAS")
+        else:   # generic HID layout: right stick on Z/RZ, triggers are buttons
+            self.rs = (pick("ABS_Z"), pick("ABS_RZ")); self.lt = self.rt = None
+        self.actions = {A[n]: v for n, v in self.cfg["map"].items() if n in A}
+        self.slow_btn = A.get(self.cfg["slow_button"]); self.fast_btn = A.get(self.cfg["fast_button"])
+        self.grabbed = False
+        if self.mode == "mouse": self.grab(True)
+        notify("Gamepad connected: " + d.name)
+        print("connected:", d.name, d.path, flush=True)
+        return True
+
+    def grab(self, on):
+        try:
+            if on and not self.grabbed: self.dev.grab(); self.grabbed = True
+            elif not on and self.grabbed: self.dev.ungrab(); self.grabbed = False
+        except OSError:
+            pass
+
+    def disconnect(self):
+        try:
+            if self.dev: self.grab(False); self.dev.close()
+        except Exception:
+            pass
+        self.dev = None; self.release_all()
+
+    def release_all(self):
+        for n in list(self.held): self.click(n, False)
+        self.hat_dir = None; self.slow_b = self.fast_b = False
+
+    def set_mode(self, m):
+        if m == self.mode: return
+        self.mode = m
+        self.release_all()
+        if self.dev: self.grab(m == "mouse")
+        notify("Mouse mode" if m == "mouse" else "Game mode (pad goes to games)")
+
+    # ---------- normalising
+    def stick(self, code):
+        if code is None or code not in self.axes: return 0.0
+        i = self.info[code]; mid = (i.max + i.min) / 2; half = (i.max - i.min) / 2 or 1
+        return (self.axes[code] - mid) / half
+    def trig(self, code):
+        if code is None or code not in self.axes: return 0.0
+        i = self.info[code]; return (self.axes[code] - i.min) / ((i.max - i.min) or 1)
+
+    # ---------- events
+    def on_event(self, ev):
+        if ev.type == ec.EV_KEY and ev.value != 2:
+            self.on_key(ev.code, ev.value)
+        elif ev.type == ec.EV_ABS:
+            self.on_abs(ev.code, ev.value)
+
+    def on_key(self, code, val):
+        (self.pressed.add if val else self.pressed.discard)(code)
+        if val and ((ec.BTN_SELECT in self.pressed and ec.BTN_START in self.pressed) or code == ec.BTN_MODE):
+            self.combo = True
+            self.set_mode("game" if self.mode == "mouse" else "mouse")
+            return
+        if not self.pressed and not val: 
+            was_combo = self.combo; self.combo = False
+            if was_combo: return
+        if self.mode != "mouse": return
+        if code == self.slow_btn: self.slow_b = bool(val); return
+        if code == self.fast_btn: self.fast_b = bool(val); return
+        act = self.actions.get(code)
+        if not act: return
+        kind, _, arg = act.partition(":")
+        if kind == "mouse": self.click(int(arg), bool(val))
+        elif kind == "key" and val: self.tap(arg.split("+"))
+        elif kind == "osk" and val: self.toggle_osk()
+        elif kind == "start" and not val and not self.combo:
+            subprocess.Popen([self.cfg["start_cmd"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif kind == "select" and not val and not self.combo: self.tap(["Alt_L", "Tab"])
+
+    def on_abs(self, code, val):
+        if code in (ec.ABS_HAT0X, ec.ABS_HAT0Y):
+            self.hat[0 if code == ec.ABS_HAT0X else 1] = val
+            if self.mode != "mouse": return
+            d = None
+            if self.hat[0] < 0: d = "left"
+            elif self.hat[0] > 0: d = "right"
+            elif self.hat[1] < 0: d = "up"
+            elif self.hat[1] > 0: d = "down"
+            self.hat_dir = d
+            if d:
+                self.tap([self.cfg["dpad"][d]]); self.hat_next = time.time() + 0.4
+        elif code in self.info:
+            self.axes[code] = val
+
+    # ---------- per-frame
+    def tick(self, dt):
+        while self.pending: self.set_mode(self.pending.pop(0))
+        if self.mode != "mouse" or not self.dev: return
+        c = self.cfg; dz = c["deadzone"]
+        mult = 1.0
+        if self.slow_b or self.trig(self.lt) > 0.3: mult = c["slow_mult"]
+        elif self.fast_b or self.trig(self.rt) > 0.3: mult = c["fast_mult"]
+        lx, ly = self.stick(self.lsx), self.stick(self.lsy)
+        mag = math.hypot(lx, ly)
+        if mag > dz:
+            s = min(1.0, (mag - dz) / (1 - dz)) ** 2
+            v = c["speed"] * mult * s
+            self.fx += lx / mag * v * dt; self.fy += ly / mag * v * dt
+            ix, iy = int(self.fx), int(self.fy)
+            self.fx -= ix; self.fy -= iy
+            if ix or iy: self.move(ix, iy)
+        rx, ry = self.stick(self.rs[0]), self.stick(self.rs[1])
+        if abs(ry) > dz:
+            self.sy += math.copysign((abs(ry) - dz) / (1 - dz) * c["scroll_rate"] * dt, ry)
+            while abs(self.sy) >= 1:
+                b = 5 if self.sy > 0 else 4
+                self.click(b, True); self.click(b, False)
+                self.sy -= math.copysign(1, self.sy)
+        else: self.sy = 0.0
+        if c["hscroll"] and abs(rx) > 0.6:
+            self.sx += math.copysign(c["scroll_rate"] * 0.5 * dt, rx)
+            while abs(self.sx) >= 1:
+                b = 7 if self.sx > 0 else 6
+                self.click(b, True); self.click(b, False)
+                self.sx -= math.copysign(1, self.sx)
+        else: self.sx = 0.0
+        if self.hat_dir and time.time() >= self.hat_next:
+            self.tap([c["dpad"][self.hat_dir]]); self.hat_next = time.time() + 0.07
+
+    def run(self):
+        last = time.time()
+        while True:
+            if self.dev is None:
+                if not self.connect():
+                    time.sleep(2); self.tick(0); continue
+            try:
+                r, _, _ = select.select([self.dev.fd], [], [], 1 / 60)
+                now = time.time(); dt = min(now - last, 0.1); last = now
+                if r:
+                    try:
+                        for ev in self.dev.read(): self.on_event(ev)
+                    except BlockingIOError:
+                        pass
+                self.tick(dt)
+            except OSError:
+                print("gamepad disconnected", flush=True); self.disconnect()
+
+def identify():
+    cfg = load_cfg(); d = find_pad(cfg["device_match"])
+    if not d:
+        print("No gamepad found. Is it plugged in? Is /dev/input readable? (try: evtest)"); return
+    print("Device:", d.name, "|", d.path); print("Press buttons / move sticks (Ctrl+C to stop)")
+    seen = {}
+    for ev in d.read_loop():
+        if ev.type not in (ec.EV_KEY, ec.EV_ABS): continue
+        n = ec.bytype[ev.type].get(ev.code, ev.code)
+        n = "/".join(n) if isinstance(n, list) else n
+        if ev.type == ec.EV_ABS:
+            if time.time() - seen.get(n, 0) < 0.25: continue
+            seen[n] = time.time()
+        print(("KEY" if ev.type == ec.EV_KEY else "ABS"), n, ev.value)
+
+if __name__ == "__main__":
+    if "--identify" in sys.argv: identify()
+    else: PadMouse().run()

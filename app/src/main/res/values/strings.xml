@@ -325,6 +325,10 @@
     <string name="summary_native_x11_preference">Start/stop Termux:X11, PulseAudio, D-Bus and the desktop with the Start/Stop buttons</string>
     <string name="title_gpu_vendor_preference">GPU</string>
     <string name="title_native_desktop_preference">Desktop environment</string>
+    <string name="title_native_gamepad_preference">Gamepad support</string>
+    <string name="summary_native_gamepad_preference">Gamepad as mouse/keyboard, game launcher, live USB and /dev/input access</string>
+    <string name="title_native_game_mode_preference">Start in game launcher</string>
+    <string name="summary_native_game_mode_preference">Open the fullscreen gamepad launcher when the desktop starts</string>
     <string name="dialog_title_gpu_vendor_preference">GPU acceleration device</string>
     <!-- X11_DISPLAY -->
     <string name="title_x11_display_preference">Display</string>

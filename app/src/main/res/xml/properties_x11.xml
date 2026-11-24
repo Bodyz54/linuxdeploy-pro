@@ -33,6 +33,16 @@
             android:key="native_x11"
             android:summary="@string/summary_native_x11_preference"
             android:title="@string/title_native_x11_preference" />
+        <CheckBoxPreference
+            android:defaultValue="@string/native_gamepad"
+            android:key="native_gamepad"
+            android:summary="@string/summary_native_gamepad_preference"
+            android:title="@string/title_native_gamepad_preference" />
+        <CheckBoxPreference
+            android:defaultValue="@string/native_game_mode"
+            android:key="native_game_mode"
+            android:summary="@string/summary_native_game_mode_preference"
+            android:title="@string/title_native_game_mode_preference" />
         <ListPreference
             android:defaultValue="@string/native_desktop"
             android:dialogTitle="@string/title_native_desktop_preference"

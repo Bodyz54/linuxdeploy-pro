@@ -83,6 +83,8 @@
     <string name="native_x11" translatable="false">true</string>
     <string name="gpu_vendor" translatable="false">auto</string>
     <string name="native_desktop" translatable="false">mate</string>
+    <string name="native_gamepad" translatable="false">true</string>
+    <string name="native_game_mode" translatable="false">false</string>
     <string name="fb_display" translatable="false">0</string>
     <string name="fb_dev" translatable="false">/dev/graphics/fb0</string>
     <string name="fb_input" translatable="false">/dev/input/event0</string>

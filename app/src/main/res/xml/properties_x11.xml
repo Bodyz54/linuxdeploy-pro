@@ -46,8 +46,8 @@
         <ListPreference
             android:defaultValue="@string/native_desktop"
             android:dialogTitle="@string/title_native_desktop_preference"
-            android:entries="@array/desktop_entries"
-            android:entryValues="@array/desktop_values"
+            android:entries="@array/native_de_entries"
+            android:entryValues="@array/native_de_values"
             android:key="native_desktop"
             android:summary="%s"
             android:title="@string/title_native_desktop_preference" />

@@ -1,6 +1,8 @@
 #!/system/bin/sh
 # Stop button (root). usage: native-stop.sh <ROOT>
-ROOT="$1"
+D="$(dirname "$0")"
+. "$D/lib-root.sh" "$1"
+ROOT="$R"
 TP=/data/data/com.termux/files
 TU=$(stat -c %u /data/data/com.termux 2>/dev/null)
 TENV="env HOME=$TP/home PREFIX=$TP/usr PATH=$TP/usr/bin LD_LIBRARY_PATH=$TP/usr/lib TMPDIR=$TP/usr/tmp"

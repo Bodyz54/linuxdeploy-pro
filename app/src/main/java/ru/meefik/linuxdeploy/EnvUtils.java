@@ -414,7 +414,7 @@ public class EnvUtils {
      * @param cmd native-start or native-stop
      * @return true if success
      */
-    public static boolean nativeDesktop(Context c, String cmd) {
+    public static boolean prepareNative(Context c) {
         File dir = new File(c.getFilesDir(), "native");
         if (!dir.exists() && !dir.mkdirs()) return false;
         try {
@@ -436,6 +436,12 @@ public class EnvUtils {
             Logger.log(c, "Cannot extract native scripts: " + e.getMessage() + "\n");
             return false;
         }
+        return true;
+    }
+
+    public static boolean nativeDesktop(Context c, String cmd) {
+        if (!prepareNative(c)) return false;
+        File dir = new File(c.getFilesDir(), "native");
         String root = PrefStore.getTargetPath(c);
         if (root == null || root.isEmpty()) {
             Logger.log(c, "Container path is empty.\n");
@@ -444,7 +450,7 @@ public class EnvUtils {
         List<String> params = new ArrayList<>();
         if ("native-start".equals(cmd)) {
             params.add("sh " + dir + "/native-start.sh '" + root + "' '" + PrefStore.getUserName(c)
-                    + "' '" + PrefStore.getGpuVendor(c) + "'");
+                    + "' '" + PrefStore.getGpuVendor(c) + "' '" + PrefStore.getNativeDesktop(c) + "'");
         } else {
             params.add("sh " + dir + "/native-stop.sh '" + root + "'");
         }

@@ -250,6 +250,10 @@ public class MainActivity extends AppCompatActivity implements
                 CustomTabsIntent customTabsIntent = builder.build();
                 customTabsIntent.launchUrl(this, Uri.parse(uri));
                 break;
+            case R.id.nav_shell:
+                EnvUtils.prepareNative(this);
+                startActivity(new Intent(this, ShellActivity.class));
+                break;
             case R.id.nav_settings:
                 Intent intent_settings = new Intent(this, SettingsActivity.class);
                 startActivity(intent_settings);

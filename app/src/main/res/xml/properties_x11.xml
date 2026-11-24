@@ -34,6 +34,14 @@
             android:summary="@string/summary_native_x11_preference"
             android:title="@string/title_native_x11_preference" />
         <ListPreference
+            android:defaultValue="@string/native_desktop"
+            android:dialogTitle="@string/title_native_desktop_preference"
+            android:entries="@array/desktop_entries"
+            android:entryValues="@array/desktop_values"
+            android:key="native_desktop"
+            android:summary="%s"
+            android:title="@string/title_native_desktop_preference" />
+        <ListPreference
             android:defaultValue="@string/gpu_vendor"
             android:dialogTitle="@string/dialog_title_gpu_vendor_preference"
             android:entries="@array/gpu_entries"

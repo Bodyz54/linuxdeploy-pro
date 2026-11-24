@@ -748,3 +748,5 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - GPU selector (auto / Mali PanVK / Adreno / PowerVR / software); correct packages and Vulkan ICD manifest created automatically.
 - Battery (read-only), USB and GPU device access inside the container.
 - Read-only kernel capability report (never modifies the kernel).
+- Debian suites: trixie (default), forky, sid added. Ubuntu suites: mantic, noble (default), oracular, plucky, questing, resolute added. Fedora 40-43 added.
+- tools/proot-to-chroot.sh: convert any proot-distro rootfs (Manjaro, Arch, Fedora, Alpine, openSUSE, Void...) to a chroot-ready rootfs.tar.gz.

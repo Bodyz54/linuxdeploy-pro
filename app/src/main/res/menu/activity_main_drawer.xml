@@ -14,6 +14,10 @@
             android:id="@+id/nav_terminal"
             android:icon="@drawable/ic_exit_to_app_24dp"
             android:title="@string/nav_terminal" />
+        <item
+            android:id="@+id/nav_shell"
+            android:icon="@drawable/ic_exit_to_app_24dp"
+            android:title="@string/nav_shell" />
     </group>
 
     <group android:id="@+id/menu_bottom">

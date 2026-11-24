@@ -549,6 +549,11 @@ public class PrefStore {
         return (u == null || u.isEmpty()) ? "android" : u;
     }
 
+    public static String getNativeDesktop(Context c) {
+        String v = PROPERTIES.get(c, "native_desktop");
+        return (v == null || v.isEmpty()) ? "mate" : v;
+    }
+
     public static String getGpuVendor(Context c) {
         String v = PROPERTIES.get(c, "gpu_vendor");
         return (v == null || v.isEmpty()) ? "auto" : v;

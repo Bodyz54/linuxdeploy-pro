@@ -260,6 +260,24 @@
         <item>chroot</item>
         <item>unshare</item>
     </string-array>
+    <string-array name="desktop_values" translatable="false">
+        <item>mate</item>
+        <item>xfce</item>
+        <item>lxqt</item>
+        <item>lxde</item>
+        <item>kde</item>
+        <item>cinnamon</item>
+        <item>gnome</item>
+    </string-array>
+    <string-array name="desktop_entries" translatable="false">
+        <item>MATE (full)</item>
+        <item>Xfce4 (full + goodies)</item>
+        <item>LXQt</item>
+        <item>LXDE</item>
+        <item>KDE Plasma</item>
+        <item>Cinnamon</item>
+        <item>GNOME (experimental)</item>
+    </string-array>
     <string-array name="gpu_values" translatable="false">
         <item>auto</item>
         <item>mali</item>
@@ -308,6 +326,9 @@
         <item>buster</item>
         <item>bullseye</item>
         <item>bookworm</item>
+        <item>trixie</item>
+        <item>forky</item>
+        <item>sid</item>
     </string-array>
     <string-array name="debian_arch_values" translatable="false">
         <item>armel</item>
@@ -332,6 +353,12 @@
         <item>jammy</item>
         <item>kinetic</item>
         <item>lunar</item>
+        <item>mantic</item>
+        <item>noble</item>
+        <item>oracular</item>
+        <item>plucky</item>
+        <item>questing</item>
+        <item>resolute</item>
         <item>devel</item>
     </string-array>
     <string-array name="ubuntu_arch_values" translatable="false">
@@ -360,6 +387,10 @@
     <string-array name="fedora_suite_values" translatable="false">
         <item>36</item>
         <item>37</item>
+        <item>40</item>
+        <item>41</item>
+        <item>42</item>
+        <item>43</item>
     </string-array>
     <string-array name="fedora_arch_values" translatable="false">
         <item>armhfp</item> <!-- f19 and later -->
